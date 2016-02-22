@@ -7,6 +7,7 @@ import argparse
 import json
 
 from srim_srout import stoppingunit
+from srim_srout import version
 
 class Error(Exception):
     pass

@@ -20,7 +20,7 @@ Install
 
    pip install srim_srout
 
-parser library and supporting script (cf. srim-srout-parse.py) are installed.
+parser library and supporting script (cf. srim-srout-parse.exe or srim-srout-parse-script.py) are installed.
 
 ::
 
