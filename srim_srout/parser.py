@@ -4,11 +4,135 @@ library to parse output data from SRIM SR
 
 import sys
 import argparse
+import json
 
-import srim_srout.stoppingunit
+from srim_srout import stoppingunit
 
 class Error(Exception):
     pass
+
+# energy conversion to keV
+energy_conversion = {
+    'eV': 1.0e-3,
+    'keV': 1.0,
+    'MeV': 1.0e3,
+    'GeV': 1.0e6}
+
+# length conversion to A
+length_conversion = {
+    'A': 1.0,
+    'nm': 10.0,
+    'um': 10.0e3,
+    'mm': 10.0e6}
+
+def parse_projectile_line(r):
+    """parse projectile data line in numerical values
+    Args:
+        r (str): input row string, like
+                 Ion = Hydrogen [1] , Mass = 1.008 amu
+    Returns:
+        tuple of (
+            Species name,
+            Atomic number,
+            Atomic mass (in amu))
+
+    Raises:
+        Error: raised when number of columns or data is not sufficient.
+    """
+    c = r.split()
+    d = (
+        c[2], # Species name
+        int(c[3][1:-1]), # Atomic Number
+        float(c[7]) # Atomic Mass
+        )
+
+    return d
+
+def parse_density_line(r):
+    """parse density data line in numerical values
+    Args:
+        r (str): input row string, like
+                 (sr.exe)       Target Density =  1.0597E+00 g/cm3 = 1.0903E+23 atoms/cm3
+                 (srmodule.exe) Density =  1.0597E+00 g/cm3 = 1.0902E+23 atoms/cm3
+                 Thus tokens should be counted from the tail.
+    Returns:
+        tuple of (
+            mass density (in g/cm3),
+            atom density (in /cm3))
+
+    Raises:
+        Error: raised when number of columns or data is not sufficient.
+    """
+    c = r.split()
+    d = (
+        float(c[-5]), # mass density
+        float(c[-2]) # Atomic Number
+        )
+
+    return d
+
+def parse_target_composition_row(r):
+    """parse target composition row data in numerical values
+    Args:
+        r (str): input row string, like
+                 H      1    061.54    010.60   
+    Returns:
+        tuple of (
+            Symbol,
+            Atomic number,
+            Atomic Percent,
+            Mass Percent)
+
+    Raises:
+        Error: raised when number of columns or data is not sufficient.
+    """
+    c = r.split()
+    d = (
+        c[0], # Symbol
+        float(c[1]), # Atomic Number
+        float(c[2]), # Atomic Percent
+        float(c[3])  # Mass Percent
+        )
+
+    return d
+
+
+
+def parse_tbl_row(r):
+    """parse tbl row data in numerical values
+
+    Args:
+        r (str): input row string, like
+                 10.00 keV   4.945E-01  8.762E-03    2247 A       544 A       576 A   
+
+    Returns:
+        tuple of (
+            energy (in Kev),
+            dE/dx Elec. (in given unit, in the file),
+            dE/dx Nucl. (in given unit, in the file),
+            Proj. Range (in AA),
+            Long. Strgl. (in AA),
+            Lat. Strgl. (in AA))
+
+    Raises:
+        Error: raised when number of columns or data is not sufficient.
+
+    Note:
+        dE/dx should be better to be normalized according to transformation table
+    """
+    c = r.split()
+    d = (
+        float(c[0]) * energy_conversion[c[1]], # energy (in Kev)
+        float(c[2]), # dE/dx Elec. (in given unit, in the file),
+        float(c[3]), # dE/dx Nucl. (in given unit, in the file),
+        float(c[4]) * length_conversion[c[5]], # Proj. Range (in AA),
+        float(c[6]) * length_conversion[c[7]], # Long. Strgl. (in AA),
+        float(c[8]) * length_conversion[c[9]] # Lat. Strgl. (in AA))
+        )
+
+    return d
+
+
 
 def parse(input):
     """parse output file
@@ -17,73 +141,78 @@ def parse(input):
         input (file): input stream
 
     Returns:
-        parsed data object
+        A dict mapping keys of parsed data
 
     Raises:
         Error: Parse format error
     """
 
-    d = {}
-    
+    # dbg = d['debug_string'] stores all string to be parsed.
+    # dbg['xxx'] corresponds to the value of d['xxx']
+    dbg = {}
+    d = {'debug_string':dbg}
+
     # output from SR.exe (SRIM-2013.00) or SRModule.exe (SRIM-2012.01)
     d['filetype'] = 'sr.exe'  # or 'srmodule.exe'
 
-    # _s suffix means string data read as it is
 
     # ==================================================================
-    d['header_ruler0_s'] = input.readline().strip()
+    dbg['header_ruler0'] = input.readline().strip()
 
     # test 'Calculation using SRIM-2006' 
     line = input.readline().strip()
     if line == 'Calculation using SRIM-2006':
-        d['header_extra_s'] = line
+        dbg['header_extra'] = line
         d['filetype'] = 'srmodule.exe'
         line = input.readline().strip()
 
     # SRIM version ---> SRIM-2012.01
-    d['header_srim_version_s'] = line
+    dbg['header_srim_version'] = line
 
     # Calc. date   ---> February 22, 2016 
-    d['header_date_s'] = input.readline().strip()
+    dbg['header_date'] = input.readline().strip()
 
     # ==================================================================
-    d['header_ruler1_s'] = input.readline().strip()
+    dbg['header_ruler1'] = input.readline().strip()
 
     # skip one line
     input.readline()
 
     # Disk File Name = Hydrogen in 1_3 Propanediol
-    d['disk_file_name_s'] = input.readline().strip()
+    dbg['disk_file_name'] = input.readline().strip()
 
     # skip one line
     input.readline()
 
     # (sr.exe)       Ion = Hydrogen [1] , Mass = 1.008 amu
     # (srmodule.exe) Ion = Hydrogen     [1] , Mass = 1.008 amu
-    d['projectile1_s'] = input.readline().strip()
+    dbg['projectile'] = input.readline().strip()
+    d['projectile_name'], d['projectile_z'], d['projectile_amu'] \
+        = parse_projectile_line(dbg['projectile'])
 
     # skip one line
     input.readline()
 
     # (sr.exe)       Target Density =  1.0597E+00 g/cm3 = 1.0903E+23 atoms/cm3
     # (srmodule.exe) Density =  1.0597E+00 g/cm3 = 1.0902E+23 atoms/cm3
-    d['density_s'] = input.readline().strip()
+    dbg['density'] = input.readline().strip()
+    d['density_mass'], d['density_atom'] = parse_density_line(dbg['density'])
 
     # ======= Target  Composition ========
-    d['target_comp_ruler0_s'] = input.readline().strip()
+    dbg['target_comp_ruler0'] = input.readline().strip()
 
     # Atom   Atom   Atomic    Mass     
-    d['target_comp_header1_s'] = input.readline().strip()
+    dbg['target_comp_header1'] = input.readline().strip()
 
     # Name   Numb   Percent   Percent  
-    d['target_comp_header2_s'] = input.readline().strip()
+    dbg['target_comp_header2'] = input.readline().strip()
 
     # ----   ----   -------   -------  
-    d['target_comp_subrulee_s'] = input.readline().strip()
+    dbg['target_comp_subrulee'] = input.readline().strip()
 
     # read target compsition data
-    d['target_composition_s'] = []
     d['target_composition'] = []
+    dbg['target_composition'] = []
 
     while True:
         # H      1    061.54    010.60   
@@ -91,20 +220,26 @@ def parse(input):
         # ====================================
         line = input.readline().strip()
         if line == '====================================':
-            d['target_comp_ruler1_s'] = line
+            dbg['target_comp_ruler1'] = line
             break
         else:
-            d['target_composition_s'].append(line)
+            dbg['target_composition'].append(line)
+            d['target_composition'].append(parse_target_composition_row(line))
 
     # Bragg Correction = -5.43%
-    d['bragg_corr_s'] = input.readline().strip()
+    dbg['bragg_corr'] = input.readline().strip()
+    sp = dbg['bragg_corr'].split()
+    d['bragg_corr'] = float(sp[-1][:-1])  # store in percent
 
     # (sr.exe)       Stopping Units =  MeV / (mg/cm2) 
     # (srmodule.exe) Stopping Units =  MeV/(mg/cm2) 
-    d['stopping_units_s'] = input.readline().strip()
+    dbg['stopping_units'] = input.readline().strip()
+    # d['stopping_units'] stores in more compact format, description by SRModule.exe
+    s = dbg['stopping_units'][len('Stopping Units ='):].strip()
+    d['stopping_units'] = stoppingunit.by_title[s][3]
 
     # See bottom of Table for other Stopping units 
-    d['stopping_units_comment_s'] = input.readline().strip()
+    dbg['stopping_units_comment'] = input.readline().strip()
 
     # skip one line
     input.readline()
@@ -112,19 +247,19 @@ def parse(input):
     # (sr.exe)       (no element)
     # (srmodule.exe) Ion = Hydrogen     [1] , Mass = 1.008 amu
     if d['filetype'] == 'srmodule.exe':
-        d['projectile_extra_s'] = input.readline().strip()
+        dbg['projectile_extra'] = input.readline().strip()
         # skip one line
         input.readline()
 
     # Ion        dE/dx      dE/dx     Projected  Longitudinal   Lateral
-    d['tbl_header1_s'] = input.readline().strip()
+    dbg['tbl_header1'] = input.readline().strip()
     # Energy      Elec.      Nuclear     Range     Straggling   Straggling
-    d['tbl_header2_s'] = input.readline().strip()
+    dbg['tbl_header2'] = input.readline().strip()
     # --------------  ---------- ---------- ----------  ----------  ----------
-    d['tbl_ruler0_s'] = input.readline().strip()
+    dbg['tbl_ruler0'] = input.readline().strip()
 
-    d['tbl_data_s'] = []
     d['tbl_data'] = []
+    dbg['tbl_data'] = []
 
     while True:
         line = input.readline().strip()
@@ -133,11 +268,13 @@ def parse(input):
         # -----------------------------------------------------------
         if line == '-----------------------------------------------------------':
             # end of parse
-            d['tbl_ruler1_s'] = line
+            dbg['tbl_ruler1'] = line
             return d
         else:
-            d['tbl_data_s'].append(line)
+            dbg['tbl_data'].append(line)
             # parse data
+            d['tbl_data'].append(parse_tbl_row(line))
+
 
 # run as script
 def main(args=sys.argv):
@@ -149,8 +286,11 @@ def main(args=sys.argv):
             default=sys.stdin)
     aparser.add_argument('output', nargs='?',
             type=argparse.FileType('wt'),
-            help='output stream default is sys.stdout',
+            help='JSON output stream default is sys.stdout',
             default=sys.stdout)
+    aparser.add_argument('--verbose', '-v', action='store_true',
+            help='dump including raw input string data',
+            default=False) 
 
     try:
         args = aparser.parse_args(args[1:])
@@ -163,7 +303,11 @@ def main(args=sys.argv):
 
     d = parse(args.input)
 
-    print(d, file=args.output)
+    if not args.verbose:
+        del(d['debug_string'])
+
+    # dump as json
+    json.dump(d, args.output, indent=2)
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
